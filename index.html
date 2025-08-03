@@ -40,10 +40,12 @@
 
         .motion-controls {
             flex-shrink: 0;
-            text-align: center;
+            display: flex;
+            justify-content: center;
+            gap: 15px;
         }
 
-        #motion-toggle {
+        #motion-toggle, #calibrate-btn {
             padding: 15px 30px;
             font-size: 1.5rem;
             font-family: 'Teko', sans-serif;
@@ -61,6 +63,15 @@
             color: #fff;
             text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
         }
+        
+        #calibrate-btn {
+            display: none; /* Hidden by default */
+        }
+        
+        #calibrate-btn:active {
+            transform: scale(0.95);
+        }
+
 
         .keyboard-area {
             flex-grow: 1;
@@ -97,6 +108,7 @@
     <div class="instrument-container">
         <div class="motion-controls">
             <button id="motion-toggle">Enable Motion</button>
+            <button id="calibrate-btn">Calibrate</button>
         </div>
         <div class="keyboard-area">
             <div class="key" id="key-sa" data-interval="0">Sa</div>
@@ -112,6 +124,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // DOM Elements
     const motionToggle = document.getElementById('motion-toggle');
+    const calibrateBtn = document.getElementById('calibrate-btn');
     const keySa = document.getElementById('key-sa');
     const keyPa = document.getElementById('key-pa');
     const allKeys = document.querySelectorAll('.key');
@@ -120,6 +133,11 @@ document.addEventListener('DOMContentLoaded', () => {
     let activeNotes = {};
     let isTiltModeActive = false;
     let currentTiltNoteIndex = 0;
+    
+    // NEW Calibration and Smoothing State
+    let calibrationOffset = 0;
+    let tiltHistory = [];
+    const TILT_HISTORY_LENGTH = 5; // Average over last 5 readings for smoothness
 
     // --- Sound Definitions ---
     const TONE_SETTINGS = { name: 'Harmonium', type: 'sawtooth', detune: 3, vol: 0.4 };
@@ -225,6 +243,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     isTiltModeActive = false;
                     motionToggle.classList.remove('active');
                     motionToggle.textContent = 'Enable Motion';
+                    calibrateBtn.style.display = 'none';
                 }
             }).catch(console.error);
         } else {
@@ -235,9 +254,21 @@ document.addEventListener('DOMContentLoaded', () => {
     
     function handleDeviceMotion(event) {
         if (!isTiltModeActive || !event.accelerationIncludingGravity.x) return;
-        const x = event.accelerationIncludingGravity.x;
-        // Map x from a typical range of -10 to 10 to an index in the scale
-        const tiltRatio = Math.max(-1, Math.min(1, x / 10));
+        
+        // Apply calibration offset
+        const rawX = event.accelerationIncludingGravity.x - calibrationOffset;
+        
+        // Add to history for smoothing
+        tiltHistory.push(rawX);
+        if (tiltHistory.length > TILT_HISTORY_LENGTH) {
+            tiltHistory.shift();
+        }
+        
+        // Calculate the average (smoothed) tilt
+        const smoothedX = tiltHistory.reduce((a, b) => a + b, 0) / tiltHistory.length;
+
+        // Map smoothed x from a typical range of -10 to 10 to an index in the scale
+        const tiltRatio = Math.max(-1, Math.min(1, smoothedX / 10));
         // Invert the ratio so left tilt is high note, right tilt is low note
         const noteIndex = Math.round((( -tiltRatio + 1) / 2) * (CHROMATIC_SCALE.length - 1));
         
@@ -255,6 +286,23 @@ document.addEventListener('DOMContentLoaded', () => {
         keySa.textContent = saNote.replace('#', '♯');
         keyPa.textContent = paNote.replace('#', '♯');
     }
+    
+    function handleCalibration() {
+        const handleCalibrationEvent = (event) => {
+            if (event.accelerationIncludingGravity.x) {
+                calibrationOffset = event.accelerationIncludingGravity.x;
+                window.removeEventListener('devicemotion', handleCalibrationEvent);
+                
+                // Visual feedback
+                const originalText = calibrateBtn.textContent;
+                calibrateBtn.textContent = 'Calibrated!';
+                setTimeout(() => {
+                    calibrateBtn.textContent = originalText;
+                }, 1000);
+            }
+        };
+        window.addEventListener('devicemotion', handleCalibrationEvent);
+    }
 
     motionToggle.addEventListener('click', () => {
         isTiltModeActive = !isTiltModeActive;
@@ -263,13 +311,19 @@ document.addEventListener('DOMContentLoaded', () => {
             requestMotionPermission();
             motionToggle.classList.add('active');
             motionToggle.textContent = 'Motion Enabled';
+            calibrateBtn.style.display = 'inline-block';
         } else {
             motionToggle.classList.remove('active');
             motionToggle.textContent = 'Enable Motion';
+            calibrateBtn.style.display = 'none';
             keySa.textContent = 'Sa';
             keyPa.textContent = 'Pa';
+            calibrationOffset = 0; // Reset calibration
+            tiltHistory = []; // Reset smoothing history
         }
     });
+    
+    calibrateBtn.addEventListener('click', handleCalibration);
 });
 </script>
 </body>
