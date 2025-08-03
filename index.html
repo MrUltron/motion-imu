@@ -127,14 +127,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const calibrateBtn = document.getElementById('calibrate-btn');
     const keySa = document.getElementById('key-sa');
     const keyPa = document.getElementById('key-pa');
-    const allKeys = document.querySelectorAll('.key');
+    const keyboardArea = document.querySelector('.keyboard-area');
 
     // State
     let activeNotes = {};
     let isTiltModeActive = false;
     let currentTiltNoteIndex = 0;
     
-    // NEW Calibration and Smoothing State
+    // Calibration and Smoothing State
     let calibrationOffset = 0;
     let tiltHistory = [];
     const TILT_HISTORY_LENGTH = 5; // Average over last 5 readings for smoothness
@@ -200,9 +200,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Event Listeners & Logic ---
     function handleNoteOn(keyElement) {
         initAudio();
-        // The base note is determined by the tilt
+        // **FIX for iOS**: Resume audio context if it's suspended
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+
         const baseNote = CHROMATIC_SCALE[currentTiltNoteIndex];
-        // The interval is read from the key itself (0 for Sa, 7 for Pa)
         const interval = parseInt(keyElement.dataset.interval || 0);
         const baseIndex = CHROMATIC_SCALE.indexOf(baseNote);
         const finalNote = CHROMATIC_SCALE[baseIndex + interval];
@@ -224,13 +227,46 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     
-    allKeys.forEach(key => {
-        key.addEventListener('mousedown', e => handleNoteOn(e.currentTarget));
-        key.addEventListener('mouseup', e => handleNoteOff(e.currentTarget));
-        key.addEventListener('mouseleave', e => handleNoteOff(e.currentTarget));
-        key.addEventListener('touchstart', e => { e.preventDefault(); handleNoteOn(e.currentTarget); }, { passive: false });
-        key.addEventListener('touchend', e => { e.preventDefault(); handleNoteOff(e.currentTarget); }, { passive: false });
+    // --- REVISED Event Handlers for Multi-touch ---
+    const activeTouches = {}; // To track which touch is on which key
+
+    keyboardArea.addEventListener('mousedown', e => {
+        if (e.target.classList.contains('key')) {
+            handleNoteOn(e.target);
+        }
     });
+    keyboardArea.addEventListener('mouseup', e => {
+        if (e.target.classList.contains('key')) {
+            handleNoteOff(e.target);
+        }
+    });
+    keyboardArea.addEventListener('mouseleave', e => {
+        // Stop all notes if mouse leaves the area
+        document.querySelectorAll('.key.active').forEach(handleNoteOff);
+    });
+
+    keyboardArea.addEventListener('touchstart', e => {
+        e.preventDefault();
+        [...e.changedTouches].forEach(touch => {
+            const target = document.elementFromPoint(touch.clientX, touch.clientY);
+            if (target && target.classList.contains('key')) {
+                handleNoteOn(target);
+                activeTouches[touch.identifier] = target;
+            }
+        });
+    }, { passive: false });
+
+    keyboardArea.addEventListener('touchend', e => {
+        e.preventDefault();
+        [...e.changedTouches].forEach(touch => {
+            const target = activeTouches[touch.identifier];
+            if (target) {
+                handleNoteOff(target);
+                delete activeTouches[touch.identifier];
+            }
+        });
+    }, { passive: false });
+
 
     // --- Tilt Control Logic ---
     function requestMotionPermission() {
@@ -247,7 +283,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }).catch(console.error);
         } else {
-            // For devices that don't require explicit permission (like Android)
             window.addEventListener('devicemotion', handleDeviceMotion);
         }
     }
@@ -255,21 +290,16 @@ document.addEventListener('DOMContentLoaded', () => {
     function handleDeviceMotion(event) {
         if (!isTiltModeActive || !event.accelerationIncludingGravity.x) return;
         
-        // Apply calibration offset
         const rawX = event.accelerationIncludingGravity.x - calibrationOffset;
         
-        // Add to history for smoothing
         tiltHistory.push(rawX);
         if (tiltHistory.length > TILT_HISTORY_LENGTH) {
             tiltHistory.shift();
         }
         
-        // Calculate the average (smoothed) tilt
         const smoothedX = tiltHistory.reduce((a, b) => a + b, 0) / tiltHistory.length;
 
-        // Map smoothed x from a typical range of -10 to 10 to an index in the scale
         const tiltRatio = Math.max(-1, Math.min(1, smoothedX / 10));
-        // Invert the ratio so left tilt is high note, right tilt is low note
         const noteIndex = Math.round((( -tiltRatio + 1) / 2) * (CHROMATIC_SCALE.length - 1));
         
         if (noteIndex !== currentTiltNoteIndex) {
@@ -293,7 +323,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 calibrationOffset = event.accelerationIncludingGravity.x;
                 window.removeEventListener('devicemotion', handleCalibrationEvent);
                 
-                // Visual feedback
                 const originalText = calibrateBtn.textContent;
                 calibrateBtn.textContent = 'Calibrated!';
                 setTimeout(() => {
@@ -318,8 +347,8 @@ document.addEventListener('DOMContentLoaded', () => {
             calibrateBtn.style.display = 'none';
             keySa.textContent = 'Sa';
             keyPa.textContent = 'Pa';
-            calibrationOffset = 0; // Reset calibration
-            tiltHistory = []; // Reset smoothing history
+            calibrationOffset = 0;
+            tiltHistory = [];
         }
     });
     
@@ -328,3 +357,4 @@ document.addEventListener('DOMContentLoaded', () => {
 </script>
 </body>
 </html>
+
