@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Tilt Instrument</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Teko:wght@500&display=swap');
+
+        :root {
+            --bg-color: #6f4e37;
+            --key-color: #fdf6e3;
+            --text-color: #4a2c2a;
+            --accent-color: #ffc107;
+            --active-color: #e74c3c;
+        }
+
+        body {
+            font-family: 'Teko', sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: var(--bg-color);
+            -webkit-tap-highlight-color: transparent;
+            overflow: hidden;
+        }
+
+        .instrument-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            box-sizing: border-box;
+            gap: 20px;
+        }
+
+        .motion-controls {
+            flex-shrink: 0;
+            text-align: center;
+        }
+
+        #motion-toggle {
+            padding: 15px 30px;
+            font-size: 1.5rem;
+            font-family: 'Teko', sans-serif;
+            border-radius: 10px;
+            border: 3px solid var(--text-color);
+            background-color: var(--key-color);
+            color: var(--text-color);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        #motion-toggle.active {
+            background-color: var(--accent-color);
+            border-color: var(--accent-color);
+            color: #fff;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+        }
+
+        .keyboard-area {
+            flex-grow: 1;
+            display: flex;
+            gap: 20px;
+        }
+        
+        .key {
+            flex-grow: 1;
+            border-radius: 15px;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            box-sizing: border-box;
+            user-select: none;
+            transition: all 0.1s ease;
+            background: var(--key-color);
+            border: 2px solid rgba(0,0,0,0.2);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            font-size: 5rem;
+            color: var(--text-color);
+        }
+        
+        .key.active {
+            background: var(--accent-color);
+            transform: scale(0.98);
+            box-shadow: inset 0 5px 15px rgba(0,0,0,0.3);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="instrument-container">
+        <div class="motion-controls">
+            <button id="motion-toggle">Enable Motion</button>
+        </div>
+        <div class="keyboard-area">
+            <div class="key" id="key-sa" data-interval="0">Sa</div>
+            <div class="key" id="key-pa" data-interval="7">Pa</div>
+        </div>
+    </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // --- Basic Setup ---
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    let audioCtx;
+
+    // DOM Elements
+    const motionToggle = document.getElementById('motion-toggle');
+    const keySa = document.getElementById('key-sa');
+    const keyPa = document.getElementById('key-pa');
+    const allKeys = document.querySelectorAll('.key');
+
+    // State
+    let activeNotes = {};
+    let isTiltModeActive = false;
+    let currentTiltNoteIndex = 0;
+
+    // --- Sound Definitions ---
+    const TONE_SETTINGS = { name: 'Harmonium', type: 'sawtooth', detune: 3, vol: 0.4 };
+    const KEY_MAP = { 'C4': 523.25, 'C#4': 554.37, 'D4': 587.33, 'D#4': 622.25, 'E4': 659.25, 'F4': 698.46, 'F#4': 739.99, 'G4': 783.99, 'G#4': 830.61, 'A4': 880.00, 'A#4': 932.33, 'B4': 987.77, 'C5': 1046.50 };
+    const CHROMATIC_SCALE = Object.keys(KEY_MAP);
+
+    // --- Audio Initialization ---
+    function initAudio() {
+        if (!audioCtx) {
+            try {
+                audioCtx = new AudioContext();
+            } catch(e) {
+                alert('Web Audio API is not supported in this browser.');
+            }
+        }
+    }
+
+    // --- Sound Generation ---
+    function playNote(baseNote) {
+        if (!audioCtx || activeNotes[baseNote]) return;
+        
+        const freq = KEY_MAP[baseNote];
+        if (!freq) return;
+
+        const now = audioCtx.currentTime;
+        const gainNode = audioCtx.createGain();
+        gainNode.gain.setValueAtTime(0, now);
+        gainNode.gain.linearRampToValueAtTime(TONE_SETTINGS.vol, now + 0.02);
+        gainNode.connect(audioCtx.destination);
+        
+        const osc1 = audioCtx.createOscillator();
+        osc1.type = TONE_SETTINGS.type;
+        osc1.frequency.setValueAtTime(freq, now);
+        osc1.connect(gainNode);
+        
+        const osc2 = audioCtx.createOscillator();
+        osc2.type = TONE_SETTINGS.type;
+        osc2.frequency.setValueAtTime(freq, now);
+        osc2.detune.setValueAtTime(TONE_SETTINGS.detune, now);
+        osc2.connect(gainNode);
+        
+        osc1.start(now);
+        osc2.start(now);
+
+        activeNotes[baseNote] = { osc1, osc2, gainNode };
+    }
+
+    function stopNote(baseNote) {
+        if (!activeNotes[baseNote]) return;
+        const { osc1, osc2, gainNode } = activeNotes[baseNote];
+        const now = audioCtx.currentTime;
+        gainNode.gain.cancelScheduledValues(now);
+        gainNode.gain.setValueAtTime(gainNode.gain.value, now);
+        gainNode.gain.linearRampToValueAtTime(0, now + 0.1);
+        osc1.stop(now + 0.1);
+        osc2.stop(now + 0.1);
+        delete activeNotes[baseNote];
+    }
+    
+    // --- Event Listeners & Logic ---
+    function handleNoteOn(keyElement) {
+        initAudio();
+        // The base note is determined by the tilt
+        const baseNote = CHROMATIC_SCALE[currentTiltNoteIndex];
+        // The interval is read from the key itself (0 for Sa, 7 for Pa)
+        const interval = parseInt(keyElement.dataset.interval || 0);
+        const baseIndex = CHROMATIC_SCALE.indexOf(baseNote);
+        const finalNote = CHROMATIC_SCALE[baseIndex + interval];
+        
+        if (finalNote) {
+            keyElement.classList.add('active');
+            playNote(finalNote);
+            // Use the key's ID to track which sound is playing
+            activeNotes[keyElement.id] = finalNote;
+        }
+    }
+
+    function handleNoteOff(keyElement) {
+        const noteToStop = activeNotes[keyElement.id];
+        if (noteToStop) {
+            keyElement.classList.remove('active');
+            stopNote(noteToStop);
+            delete activeNotes[keyElement.id];
+        }
+    }
+    
+    allKeys.forEach(key => {
+        key.addEventListener('mousedown', e => handleNoteOn(e.currentTarget));
+        key.addEventListener('mouseup', e => handleNoteOff(e.currentTarget));
+        key.addEventListener('mouseleave', e => handleNoteOff(e.currentTarget));
+        key.addEventListener('touchstart', e => { e.preventDefault(); handleNoteOn(e.currentTarget); }, { passive: false });
+        key.addEventListener('touchend', e => { e.preventDefault(); handleNoteOff(e.currentTarget); }, { passive: false });
+    });
+
+    // --- Tilt Control Logic ---
+    function requestMotionPermission() {
+        if (typeof DeviceMotionEvent.requestPermission === 'function') {
+            DeviceMotionEvent.requestPermission().then(permissionState => {
+                if (permissionState === 'granted') {
+                    window.addEventListener('devicemotion', handleDeviceMotion);
+                } else {
+                    alert('Permission for motion sensors was not granted.');
+                    isTiltModeActive = false;
+                    motionToggle.classList.remove('active');
+                    motionToggle.textContent = 'Enable Motion';
+                }
+            }).catch(console.error);
+        } else {
+            // For devices that don't require explicit permission (like Android)
+            window.addEventListener('devicemotion', handleDeviceMotion);
+        }
+    }
+    
+    function handleDeviceMotion(event) {
+        if (!isTiltModeActive || !event.accelerationIncludingGravity.x) return;
+        const x = event.accelerationIncludingGravity.x;
+        // Map x from a typical range of -10 to 10 to an index in the scale
+        const tiltRatio = Math.max(-1, Math.min(1, x / 10));
+        // Invert the ratio so left tilt is high note, right tilt is low note
+        const noteIndex = Math.round((( -tiltRatio + 1) / 2) * (CHROMATIC_SCALE.length - 1));
+        
+        if (noteIndex !== currentTiltNoteIndex) {
+            currentTiltNoteIndex = noteIndex;
+            updateKeyLabels();
+        }
+    }
+
+    function updateKeyLabels() {
+        const saNote = CHROMATIC_SCALE[currentTiltNoteIndex];
+        const paIndex = currentTiltNoteIndex + 7;
+        const paNote = paIndex < CHROMATIC_SCALE.length ? CHROMATIC_SCALE[paIndex] : '-';
+        
+        keySa.textContent = saNote.replace('#', '♯');
+        keyPa.textContent = paNote.replace('#', '♯');
+    }
+
+    motionToggle.addEventListener('click', () => {
+        isTiltModeActive = !isTiltModeActive;
+        if (isTiltModeActive) {
+            initAudio();
+            requestMotionPermission();
+            motionToggle.classList.add('active');
+            motionToggle.textContent = 'Motion Enabled';
+        } else {
+            motionToggle.classList.remove('active');
+            motionToggle.textContent = 'Enable Motion';
+            keySa.textContent = 'Sa';
+            keyPa.textContent = 'Pa';
+        }
+    });
+});
+</script>
+</body>
+</html>
